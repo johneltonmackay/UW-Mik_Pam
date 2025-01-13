@@ -18,9 +18,9 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                 log.debug('Current User ID', currentUser.id);
                 const objCurrentRecord = scriptContext.newRecord;
                 const IRWINDALE_00_IN_HOUSE = 3 
-                const OE_MISC_ITEM = 13173
-                const OE_MISC_CHARGE = 13374
-                const UNIDENTIFIED_SHIPPING_METHOD = 13375
+                const OE_MISC_ITEM = 10447
+                const OE_MISC_CHARGE = 10446
+                const UNIDENTIFIED_SHIPPING_METHOD = 10448
                 const SET_UP = 2677
                 
                 const intRecordId = objCurrentRecord.id;
@@ -55,8 +55,12 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                         strPoNumber = objRecord.getValue({
                             fieldId: 'custrecord_po_number'
                         });
+
+                        strCustomerRecId = objRecord.getValue({
+                            fieldId: 'custrecord_customer_internal_id'
+                        });
                         
-                        if (strJsonData) {
+                        if (strCustomerRecId) {
                             let objData = JSON.parse(strJsonData);
                             let arrItemSearch = searchItem()
                             let arrShipMethodSearch = searchShipMethod()
@@ -139,28 +143,11 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                                             objSOData.shipMethodName = strShipMethod
                                         }
 
-                                        if (strCustomerEmail){
-                                            let arrCustomer = searchCustomer(strCustomerEmail)
-                                            if(arrCustomer.length > 0 && arrCustomer){
-                                                objSOData.customerId = arrCustomer[0].internalId
-                                            } else {
-                                                objCustomerParam = {
-                                                    companyName: strCompanyName,
-                                                    email: strCustomerEmail,
-                                                    firstName: strCustomerFname,
-                                                    lastName: strCustomerLname,
-                                                    phone: strCustomerPhone,
-                                                    ppaiNumber: strCustomerPpaiNumber,
-                                                    asiNumber: strCustomerASINumber,
-                                                    address1: strCustomerAddr1,
-                                                    address2: strCustomerAddr2,
-                                                    city: strCustomerCity,
-                                                    state: strCustomerState,
-                                                    zipCode: strCustomerZipCode,
-                                                    country: strCustomerCountry,
-                                                }
-                                            }
-                                        } else {
+                                        let arrCustomer = searchCustomer(strCustomerRecId)
+                                        if(arrCustomer.length == 1){
+                                            objSOData.customerId = arrCustomer[0].internalId
+                                            objSOData.priceLevel = arrCustomer[0].priceLevel
+                                        } else if (arrCustomer.length < 1) {
                                             objCustomerParam = {
                                                 companyName: strCompanyName,
                                                 email: strCustomerEmail,
@@ -286,9 +273,11 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                                 objSOData.lineItems = arrItemData
                                 objSOData.memo = arrMemo
                                 objSOData.shipping = objShipToData
+                                objSOData.metrixPOEngineRecId = intRecordId
                                 objSOData.location = IRWINDALE_00_IN_HOUSE
                                 objSOData.oe_misc_item = OE_MISC_ITEM
                                 objSOData.oe_misc_charge = OE_MISC_CHARGE
+                                objSOData.set_up = SET_UP
                                 objSOData.unidentified_ship_method = UNIDENTIFIED_SHIPPING_METHOD
 
                                 log.debug("afterSubmit objSOData", objSOData)
@@ -297,13 +286,13 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                                 if (objSOData.customerId){
                                     objSOData.newCustomer = false
                                     intSalesOrderId = createSalesOrder(objSOData)
-
                                 } else {
                                     let customerId = createCustomer(objCustomerParam)
 
                                     if (customerId){
                                         objSOData.newCustomer = true
                                         objSOData.customerId = customerId
+                                        objSOData.priceLevel = null
                                         intSalesOrderId = createSalesOrder(objSOData)
                                     }
                                 }
@@ -330,16 +319,18 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                                         value: null
                                     });
 
-                                    record.attach({
-                                        record: {
-                                            type: 'file',
-                                            id: pdfId
-                                        },
-                                        to: {
-                                            type: 'salesorder',
-                                            id: intSalesOrderId
-                                        }
-                                    });
+                                    if (pdfId){
+                                        record.attach({
+                                            record: {
+                                                type: 'file',
+                                                id: pdfId
+                                            },
+                                            to: {
+                                                type: 'salesorder',
+                                                id: intSalesOrderId
+                                            }
+                                        });
+                                    }
                                 }
                       
 
@@ -435,14 +426,23 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
             }
         }
 
-        const searchCustomer = (strCustomerEmail) => {
+        const searchCustomer = (strCustomerRecId) => {
             let arrCustomer = [];
             try {
                 let objEntitySearch = search.create({
                     type: 'customer',
-                    filters:  ['email', 'is', strCustomerEmail],
+                    filters:  [
+                        ['internalid', 'anyof', strCustomerRecId],
+                        // 'OR',
+                        // ['email', 'is', searchCustomerParam.email],
+                        // 'OR',
+                        // ['companyname', 'is', searchCustomerParam.companyname],
+                        // 'OR',
+                        // ['contact.email', 'is', searchCustomerParam.email],
+                    ],
                     columns: [
                         search.createColumn({ name: 'internalid' }),
+                        search.createColumn({ name: 'pricelevel' }),
                     ]
                 });
                 
@@ -456,6 +456,7 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                             for (var pageResultIndex = 0; pageResultIndex < pageData.length; pageResultIndex++) {
                             arrCustomer.push({
                                     internalId: pageData[pageResultIndex].getValue({name: 'internalid'}),
+                                    priceLevel: pageData[pageResultIndex].getValue({name: 'pricelevel'}),
                                 });
                             }
                         }
@@ -611,6 +612,11 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                     fieldId: 'entity',
                     value: objSOData.customerId
                 })
+
+                objRecord.setValue({
+                    fieldId: 'custbody_metrix_po_engine_id',
+                    value: objSOData.metrixPOEngineRecId
+                })
                 
                 objRecord.setValue({
                     fieldId: 'otherrefnum',
@@ -618,9 +624,14 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                 })
 
                 objRecord.setValue({
-                    fieldId: 'trandate',
-                    value: objSOData.orderDate ? new Date(objSOData.orderDate) : null
+                    fieldId: 'custbody_extend_generate_public_upload',
+                    value: true
                 })
+
+                // objRecord.setValue({
+                //     fieldId: 'trandate',
+                //     value: objSOData.orderDate ? new Date(objSOData.orderDate) : null
+                // })
 
                 objRecord.setValue({
                     fieldId: 'custbody5',
@@ -640,6 +651,36 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                 objRecord.setValue({
                     fieldId: 'shipmethod',
                     value: objSOData.shipMethodId
+                })
+
+                objRecord.setValue({
+                    fieldId: 'custbody_extend_web_approval_gen_url',
+                    value: true // Web Approval Generate
+                })
+
+                objRecord.setValue({
+                    fieldId: 'paymentmethod',
+                    value: null //Payment Method
+                })
+
+                objRecord.setValue({
+                    fieldId: 'custbody10',
+                    value: 5 // 5 Day
+                })
+
+                objRecord.setValue({
+                    fieldId: 'custbody11',
+                    value: 1 // In-House
+                })
+
+                objRecord.setValue({
+                    fieldId: 'custbodyhc_current_order_status_2',
+                    value: 5 // Quality Control
+                })
+
+                objRecord.setValue({
+                    fieldId: 'custbody_metrix_po_engine_generated',
+                    value: true
                 })
 
                 let arrShippingData = searchShippingAddress(intCustomerId)
@@ -727,7 +768,15 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                         value: data.quantity ? data.quantity : 1
                     });
 
-                    if (data.item == objSOData.oe_misc_charge || data.item == objSOData.oe_misc_item){
+                    if (data.item == objSOData.oe_misc_charge ||
+                        data.item == objSOData.oe_misc_item ||
+                        objSOData.priceLevel == null ||
+                        objSOData.priceLevel == undefined ||
+                        objSOData.priceLevel == "" ||
+                        objSOData.priceLevel == 0 ||
+                        data.rate == 0 ||
+                        data.amount == 0
+                     ){
                         objRecord.setCurrentSublistValue({
                             sublistId: 'item',
                             fieldId: 'rate',
@@ -783,6 +832,8 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                     objCustomerRecord.setValue({ fieldId: 'phone', value: objCustomerParam.phone });
                     objCustomerRecord.setValue({ fieldId: 'custentity13', value: objCustomerParam.ppaiNumber });
                     objCustomerRecord.setValue({ fieldId: 'custentity12', value: objCustomerParam.custentity12 });
+                    objCustomerRecord.setValue({ fieldId: 'custentity_metrix_po_engine_generated', value: true });
+                    
 
 
                     if (objCustomerParam.country){
