@@ -13,7 +13,8 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
 
         const afterSubmit = (scriptContext) => {
             log.debug('scriptContext', scriptContext.type)
-            if (scriptContext.type =='edit' || scriptContext.type == 'xedit' || scriptContext.type == 'create') {
+            // if (scriptContext.type =='edit' || scriptContext.type == 'xedit' || scriptContext.type == 'create') {
+            if (scriptContext.type == 'create') {
                 let currentUser = runtime.getCurrentUser();
                 log.debug('Current User ID', currentUser.id);
                 const objCurrentRecord = scriptContext.newRecord;
@@ -34,11 +35,15 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                 objSOData.orderDate = null
                 objSOData.inHandsDate = null
                 objSOData.memo = null
+                let arrObjKeys = []
+                let arrObjRawLineItemData = []
+                let arrLogs = []
                 let arrMemo = []
                 let arrItemData = []
                 let intSalesOrderId = null
                 let strPoNumber = null
                 let strJsonData = null
+                let strEmailContent = null
 
                 if (intRecordId) {
                     let objRecord = record.load({
@@ -62,10 +67,12 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                         
                         if (strCustomerRecId) {
                             let objData = JSON.parse(strJsonData);
+                            let arrCustomer = searchCustomer(strCustomerRecId)
                             let arrItemSearch = searchItem()
                             let arrShipMethodSearch = searchShipMethod()
                             try {
                                 for (const key in objData) {
+                                    arrObjKeys.push(key)
                                     if(key == 'purchaseOrder'){
                                         let objPOData = objData[key]
                                         let strCompanyName = objPOData.customer.company
@@ -106,6 +113,9 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                                         }
 
                                         objSOData.otherRef = objPOData.purchaseOrderNumber
+
+
+
                                         let rawOrderDate = objPOData.orderDate ? new Date(objPOData.orderDate) : new Date()
                                         let rawInHandsDate = objPOData.inHandsDate ? new Date(objPOData.inHandsDate) : null
 
@@ -114,6 +124,10 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                                                 value: rawOrderDate,
                                                 type: format.Type.DATE
                                             });
+                                            if (isNaN(Date.parse(objSOData.orderDate))) {
+                                                objSOData.orderDate = null;
+                                                arrErrorMessage.push('Date Formatting Error: orderDate: ' + objPOData.orderDate)
+                                            } 
                                         }
 
                                         if (rawInHandsDate){
@@ -121,6 +135,10 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                                                 value: rawInHandsDate,
                                                 type: format.Type.DATE
                                             });
+                                            if (isNaN(Date.parse(objSOData.inHandsDate))) {
+                                                objSOData.inHandsDate = null;
+                                                arrErrorMessage.push('Date Formatting Error: inHandsDate: ' + objPOData.inHandsDate)
+                                            }
                                         }
 
                                         let strShipMethod = objPOData.shippingMethod
@@ -143,7 +161,6 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                                             objSOData.shipMethodName = strShipMethod
                                         }
 
-                                        let arrCustomer = searchCustomer(strCustomerRecId)
                                         if(arrCustomer.length == 1){
                                             objSOData.customerId = arrCustomer[0].internalId
                                             objSOData.priceLevel = arrCustomer[0].priceLevel
@@ -170,7 +187,7 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                                         let strItemName = null
                                         let arrLineItemData = objData[key]
                                         log.debug('afterSubmit arrLineItemData', arrLineItemData)
-
+                                        arrObjRawLineItemData = arrLineItemData
                                         arrLineItemData.forEach(data => {
                                             let strFinalSKU = data.finalSKU
                                             let strSKU = data.sku
@@ -189,10 +206,18 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                                             
                                             log.debug('afterSubmit objLogs', objLogs)
 
+                                            arrLogs.push({
+                                                objLogs: objLogs
+                                            })
+
                                             const arrFilteredByFinalSKU = arrItemSearch.filter(item =>
                                                 item.itemid.toLowerCase().endsWith(strFinalSKU.toLowerCase())
                                             );
                                             log.debug('afterSubmit arrFilteredByFinalSKU', arrFilteredByFinalSKU)
+
+                                            arrLogs.push({
+                                                arrFilteredByFinalSKU: arrFilteredByFinalSKU
+                                            })
 
                                             if (arrFilteredByFinalSKU.length == 1){
                                                 intItemId = arrFilteredByFinalSKU[0].internalId
@@ -258,6 +283,9 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                                                     }
                                                 }
                                             }
+                                            arrLogs.push({
+                                                arrItemData: arrItemData
+                                            })
                                         });
                                     }     
                                     if (key == 'specialInstructions'){
@@ -268,10 +296,14 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                                         let arrAddNotes = objData[key]
                                         arrMemo = [...arrMemo, ...arrAddNotes]
                                     }
+                                    if (key == 'emailIntent'){
+                                        strEmailContent = objData[key]
+                                    }
                                 }
 
                                 objSOData.lineItems = arrItemData
                                 objSOData.memo = arrMemo
+                                objSOData.orderType = strEmailContent
                                 objSOData.shipping = objShipToData
                                 objSOData.metrixPOEngineRecId = intRecordId
                                 objSOData.location = IRWINDALE_00_IN_HOUSE
@@ -285,6 +317,8 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
 
                                 if (objSOData.customerId){
                                     objSOData.newCustomer = false
+
+                                    activateCustomer(objSOData.customerId)
                                     intSalesOrderId = createSalesOrder(objSOData)
                                 } else {
                                     let customerId = createCustomer(objCustomerParam)
@@ -389,6 +423,27 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                         value: JSON.stringify(objSOData)
                     });
 
+                    objRecord.setValue({
+                        fieldId: 'custrecord_item_data',
+                        value: JSON.stringify(arrObjRawLineItemData)
+                    });
+
+                    objRecord.setValue({
+                        fieldId: 'custrecord_obj_logs',
+                        value: JSON.stringify(arrLogs)
+                    });
+
+                    objRecord.setValue({
+                        fieldId: 'custrecord_json_keys',
+                        value: JSON.stringify(arrObjKeys)
+                    });
+
+                    objRecord.setValue({
+                        fieldId: 'custrecord_so_customer_name',
+                        value: objSOData.customerId
+                    });
+
+
                     let metrixPOEngineRecId = objRecord.save({
                         enableSourcing: true,
                         ignoreMandatoryFields: true
@@ -400,6 +455,23 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
         };
 
         // Private Functions
+
+        const activateCustomer = (customerId) => { 
+            try {
+                record.submitFields({
+                    type: record.Type.CUSTOMER,
+                    id: customerId,
+                    values: {
+                        isinactive: false
+                    }
+                });
+        
+                log.debug('Success', `Customer ${customerId} has been activated.`);
+            } catch (error) {
+                log.error('Error activating customer', error.message);
+            }
+        }
+
         const sendEmailError = (objEmailParam) => {
             try {
                 let objBodyMessage = `
@@ -511,6 +583,56 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
               return arrItem;
         }
 
+        const searchPriceLevel = (objSOData) => {
+            let arrItemPrice = [];
+            try {
+                if (objSOData.priceLevel){
+                    let objSearch = search.create({
+                        type: 'item',
+                        filters:  [
+                          ['matrix', 'is', 'F'],
+                          'AND',
+                          ['isinactive', 'is', 'F'],
+                          'AND',
+                          ['pricing.pricelevel', 'anyof', objSOData.priceLevel],
+                        ],
+                        columns: [
+                            search.createColumn({ name: 'internalid' }),
+                            search.createColumn({ name: 'displayname' }),
+                            search.createColumn({ name: 'itemid' }),
+                            search.createColumn({ name: 'unitprice', join: 'pricing' }),
+                            search.createColumn({ name: 'pricelevel', join: 'pricing' })
+                        ]
+                    });
+                    
+                    var searchResultCount = objSearch.runPaged().count;
+                    if (searchResultCount != 0) {
+                        var pagedData = objSearch.runPaged({pageSize: 1000});
+                        for (var i = 0; i < pagedData.pageRanges.length; i++) {
+                            var currentPage = pagedData.fetch(i);
+                            var pageData = currentPage.data;
+                            if (pageData.length > 0) {
+                                for (var pageResultIndex = 0; pageResultIndex < pageData.length; pageResultIndex++) {
+                                    arrItemPrice.push({
+                                        internalId: pageData[pageResultIndex].getValue({name: 'internalid'}),
+                                        description: pageData[pageResultIndex].getValue({name: 'displayname'}),
+                                        itemid: pageData[pageResultIndex].getValue({name: 'itemid'}),
+                                        unitprice: pageData[pageResultIndex].getValue({ name: 'unitprice', join: 'pricing' }),
+                                        pricelevel: pageData[pageResultIndex].getValue({ name: 'pricelevel', join: 'pricing' }),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                log.error('searchPriceLevel', error.message);
+                arrErrorMessage.push(error.message);
+            }
+            log.debug('searchPriceLevel arrItemPrice', arrItemPrice);
+            return arrItemPrice;
+        }
+
         const searchShipMethod = () => {
             let arrShipMethod = [];
               try {
@@ -602,6 +724,10 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
             let strShippingName = objSOData.shipping.company ? objSOData.shipping.company : null
             let intShipId = null
             let salesOrderId = null
+            let intOrderType = null
+
+            let arrItemPriceLevel = searchPriceLevel(objSOData)
+
             try {
                 let objRecord = record.create({
                     type: 'salesorder',
@@ -628,10 +754,18 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                     value: true
                 })
 
-                // objRecord.setValue({
-                //     fieldId: 'trandate',
-                //     value: objSOData.orderDate ? new Date(objSOData.orderDate) : null
-                // })
+                if (objSOData.orderType == 'Sample Request'){
+                    intOrderType = 3 // Samples
+                } else if (objSOData.orderType == 'Rush Order') {
+                    intOrderType = 4 // 24 Rush
+                } else {
+                    intOrderType = 5 // 5 Day
+                }
+
+                objRecord.setValue({
+                    fieldId: 'custbody10',
+                    value: intOrderType
+                })
 
                 objRecord.setValue({
                     fieldId: 'custbody5',
@@ -725,6 +859,20 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                 })
 
                 objSOData.lineItems.forEach(data => {
+                    let intItemSKUId = data.item
+                    let hasItemPriceLevel = false
+
+                    const arrFilteredByFinalPriceLevel = arrItemPriceLevel.filter(item =>
+                        item.internalId == intItemSKUId
+                    );
+                    log.debug('createSalesOrder arrFilteredByFinalPriceLevel', arrFilteredByFinalPriceLevel)
+
+                    if (arrFilteredByFinalPriceLevel.length > 0){
+                        hasItemPriceLevel = true
+                    } else {
+                        hasItemPriceLevel = false
+                    }
+
                     let arrItemDescription = []
 
                     objRecord.selectNewLine({
@@ -770,13 +918,10 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
 
                     if (data.item == objSOData.oe_misc_charge ||
                         data.item == objSOData.oe_misc_item ||
-                        objSOData.priceLevel == null ||
-                        objSOData.priceLevel == undefined ||
-                        objSOData.priceLevel == "" ||
-                        objSOData.priceLevel == 0 ||
-                        data.rate == 0 ||
-                        data.amount == 0
-                     ){
+                        !hasItemPriceLevel ||
+                        data.rate < 1 ||
+                        data.amount < 1
+                        ){
                         objRecord.setCurrentSublistValue({
                             sublistId: 'item',
                             fieldId: 'rate',
@@ -789,7 +934,6 @@ define(['N/record', 'N/runtime', 'N/search', 'N/format', 'N/email'],
                             value: data.amount ? data.amount : 0
                         });
                     }
-
 
                     objRecord.setCurrentSublistValue({
                         sublistId: 'item',
